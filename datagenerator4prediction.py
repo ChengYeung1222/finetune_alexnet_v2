@@ -1,5 +1,6 @@
 import tensorflow as tf
 import numpy as np
+import random
 
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework.ops import convert_to_tensor
@@ -11,8 +12,7 @@ class PreDataGenerator(object):
     Requires Tensorflow >= version 1.12rc0
     """
 
-    def __init__(self, txt_file, mode, batch_size, num_classes, iterator_size, kth_init_op, shuffle=False,
-                 buffer_size=1000, classifier_v3=True):
+    def __init__(self, txt_file, mode, batch_size, num_classes, iterator_size, kth_init_op, classifier_version=1):
         self.txt_file = txt_file
         self.num_classes = num_classes
 
@@ -20,11 +20,16 @@ class PreDataGenerator(object):
         self.s = iterator_size
 
         # retrieve the data from the text file
-        if classifier_v3:
-            self._read_txt_file_v3()
-
-        else:
+        if classifier_version == 1:
             self._read_txt_file()
+        elif classifier_version == 3:
+            self._read_txt_file_v3()
+        elif classifier_version == 4:
+            self._read_txt_file_v4()
+        elif classifier_version ==5:
+            self._read_txt_file_randomly()
+        else:
+            raise ValueError('Invalid version v{}'.format(classifier_version))
 
         # number of samples in the dataset
         self.data_size = len(self.img_paths)
@@ -33,7 +38,7 @@ class PreDataGenerator(object):
         self.img_paths = convert_to_tensor(self.img_paths, dtype=dtypes.string)
 
         # create dataset
-        data = tf.data.Dataset.from_tensor_slices((self.img_paths))#.repeat(kth_init_op).batch(iterator_size)#todo
+        data = tf.data.Dataset.from_tensor_slices((self.img_paths))  # .repeat(kth_init_op).batch(iterator_size)#todo
 
         # distinguish between train/infer/pre. when calling the parsing functions
         if mode == 'predicting':
@@ -46,19 +51,21 @@ class PreDataGenerator(object):
         # create a new dataset with batches of images
         data = data.batch(batch_size)
 
-        iterator=data.make_initializable_iterator()
-        self.iterator=iterator
+        iterator = data.make_initializable_iterator()
+        self.iterator = iterator
 
         self.data = data
 
     def _read_txt_file(self):
         """Read the content of the text file and store it into lists."""
         self.img_paths = []
+        self.labels = []  # comment it when prediction
         with open(self.txt_file, 'r') as f:
             lines = f.readlines()
             for line in lines:
                 items = line.split(',')  # .csv
                 self.img_paths.append(items[0])
+                self.labels.append(int(items[1]))  # comment it when prediction
 
     def _parse_function_prediction(self, filename):
         """Input parser for samples of the prediction set."""
@@ -66,7 +73,7 @@ class PreDataGenerator(object):
         # load and preprocess the input file
         height = 227
         width = 227
-        depth = 6
+        depth = 8#todo: parsing shape
         image_bytes = height * width * depth * 4
 
         img_string = tf.read_file(filename)
@@ -80,7 +87,31 @@ class PreDataGenerator(object):
 
         self.img_paths = []
         with open(self.txt_file, 'r') as f:
-            lines = f.readlines()[self.s*self.k:self.s*self.k + self.s]
+            lines = f.readlines()[self.s * self.k:self.s * self.k + self.s]
             for line in lines:
                 items = line.split(',')  # .csv
                 self.img_paths.append(items[0])
+
+    def _read_txt_file_v4(self):
+
+        self.img_paths = []
+        with open(self.txt_file, 'r') as f:
+            lines = f.readlines()[self.s * self.k:self.s * self.k + self.s]
+            for line in lines:
+                items = line.split(',')  # .csv
+                self.img_paths.append(items[0])
+        pass  # todo
+
+    def _read_txt_file_randomly(self):
+        """Read the content of the text file and store it into lists."""
+        self.img_paths = []
+        self.labels = []  # comment it when prediction
+        self.flen=len(open(self.txt_file,'r').readlines())
+        # self.samlen=2000
+        with open(self.txt_file, 'r') as f:
+            lines = f.readlines()
+            #read_txt_file.ipynb
+            for i in range(self.s):
+                items = lines[random.randint(0,self.flen-1)].split(',')  # .csv
+                self.img_paths.append(items[0])
+                self.labels.append(int(items[1]))  # comment it when prediction
