@@ -9,15 +9,6 @@ import re
 import math
 import integrated_gradients_tf as ig
 
-numbers = re.compile(r'(\d+)')
-
-
-def numericalSort(value):
-    parts = numbers.split(value)
-    parts[1::2] = map(int, parts[1::2])
-    return parts
-
-
 # use the specified gpu
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
@@ -64,7 +55,6 @@ with tf.device('/cpu:0'):
 # Ops for initializing the two different iterators
 predicting_init_op = iterator.make_initializer(pre_data.data)
 
-# #---------------------------------------------------------------------------------------------
 x = tf.placeholder(tf.float32, [None, 227, 227, num_channels])
 inter, stepsize, ref = ig.linear_inpterpolation(x, num_steps=50)
 keep_prob = tf.constant(1., dtype=tf.float32)
@@ -72,26 +62,6 @@ keep_prob = tf.constant(1., dtype=tf.float32)
 # Initialize model
 # model = AlexNet(x, keep_prob, 2, [])
 model_ig = AlexNet(inter, keep_prob, 2, [])
-
-# Remainder
-current_dir = os.getcwd()
-image_dir = os.path.join(current_dir, '../jj_100/')  # todo:'../../../../mnt/usbhd1/data/'
-# img_files = [os.path.join(image_dir, f) for f in os.listdir(image_dir) if f.endswith('.txt')]
-imgs = []
-groundtruth = []
-# importedgraph = tf.train.import_meta_graph("model_epoch10.ckpt.meta")
-temp_files = [image_dir + "/" + f for f in os.listdir(image_dir) if f.endswith('.bin')]
-len_temp_files = len(temp_files)
-num_iter = len_temp_files // batch_size
-temp_files.sort(key=numericalSort)
-remd = len_temp_files % batch_size
-temp_files = temp_files[-remd:]
-# print(temp_files)
-for f in temp_files:
-    if not f.endswith('.bin'):
-        continue
-    else:
-        imgs.append(tf.read_file(f))
 
 # Link variable to model output
 # score = model.fc8
@@ -104,24 +74,6 @@ softmax_ig = tf.nn.softmax(score_ig)
 explanations=[]
 for i in range(num_classes):
     explanations.append(ig.build_ig(inter, stepsize, softmax_ig[:, i], num_steps=50))
-# ---------------------------------------------------------------------------------------------
-
-# -------------------------------------------------------------------------------------
-# integrated gradient
-# x2 = tf.placeholder(tf.float32, [None, 227, 227, 11])
-# _x2 = tf.contrib.slim.flatten(x2)
-# inter, stepsize, ref = ig.linear_inpterpolation(_x2, num_steps=50)
-#
-# keep_prob2 = tf.constant(1., dtype=tf.float32)
-# # integrated gradient
-# model2 = AlexNet(x2, keep_prob2, 2, [])
-#
-# # Link variable to model output
-# score2 = model2.fc8
-# pred2 = tf.nn.softmax(score2)
-#
-# ig.build_ig(inter, stepsize, pred2[:, 0], num_steps=50)
-# --------------------------------------------------------------------------------------
 
 # create saver instance
 saver = tf.train.Saver()
@@ -148,7 +100,6 @@ with tf.Session(config=config) as sess:
     count = 0
     for i in range(FLAGS.iter_epoch * FLAGS.pre_size, FLAGS.iter_epoch * FLAGS.pre_size + FLAGS.pre_size):
         # get next batch of data
-        print("{} batches already fed = {:.0f}".format(datetime.now(), i))
         img_batch = sess.run(next_batch)
 
         # continue
@@ -156,59 +107,9 @@ with tf.Session(config=config) as sess:
         # And run the predicting op
         img_batch = tf.reshape(img_batch, (batch_size, 227, 227, num_channels))
         pred_ig = sess.run(explanations, feed_dict={x: sess.run(img_batch)})
-        continue
 
-        # pred = sess.run(softmax, feed_dict={x: sess.run(img_batch)})
-        # predicted_label = pred.argmax(axis=1)
-        # predictions.append(predicted_label[0])
-        # output_file.write(str(i) + ' , ' + str(predicted_label[0]) + '\n')
+        if i & 0xFF == 0xFF:
+            print("{} batches already fed = {:.0f}".format(datetime.now(), i))
 
-        # prob_0.append(pred[0][0])
-        # prob_1.append(pred[0][1])
-        # output_file.write(str(i) + ' , '  + ' , ' + str(prob_1[i]) + ' , '+  str(prob_0[i]) +'\n')
-        # if count <batch_size*num_iter:
-        if count < 100000:
-            # count += 1
-            print(count)
-            # continue
-            img_batch = sess.run(next_batch)
 
-            # continue
-
-            # And run the predicting op
-            img_batch = tf.reshape(img_batch, (batch_size, 227, 227, num_channels))
-            pred = sess.run(softmax, feed_dict={x: sess.run(img_batch)})
-            for j in range(batch_size):
-                output_file.write(str(i) + ' , ' + str(pred[j][0]) + ' , ' + str(pred[j][1]) + '\n')
-                # msg = str(count) + ' , ' + str(pred[j][0]) + ' , ' + str(pred[j][1]) + '\n'
-                # print(msg)
-                count = count + 1
-            # sess.run(pred2, feed_dict={x2: sess.run(img_batch)})
-
-        elif count == 10000000000:
-            # count += 1
-            print(str(count) + '  remainder')
-            # continue
-            for k, image in enumerate(imgs):
-                height = 227
-                width = 227
-                depth = num_channels
-                bytes = tf.decode_raw(image, out_type=tf.float32)
-                img = tf.reshape(bytes, [1, height, width, depth])
-                pred = sess.run(softmax, feed_dict={x: sess.run(img)})
-                output_file.write(str(count) + ' , ' + str(pred[j][0]) + ' , ' + str(pred[j][1]) + '\n')
-                count = count + 1
-                # img_decoded = tf.image.decode_jpeg(image, channels=3)
-                # img_resized = tf.image.resize_images(img_decoded, [227, 227])
-                # img_centered = tf.subtract(img_resized,imagenet_mean)
-                # img_centered = tf.subtract(img_centered,trainingset_mean)
-                # img_bgr = img_centered[:, :, ::-1]
-                # # Reshape as needed to feed into model
-
-        else:
-            pass
-
-        # if i & 0xFF == 0xFF:
-
-# tf.reset_default_graph()
 output_file.close()
