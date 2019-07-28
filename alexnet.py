@@ -28,7 +28,7 @@ import numpy as np
 class AlexNet(object):
     """Implementation of the AlexNet."""
 
-    def __init__(self, x, keep_prob, num_classes, skip_layer,
+    def __init__(self, x, keep_prob, num_classes, skip_layer, weight_decay,
                  weights_path='DEFAULT'):
         """Create the graph of the AlexNet model.
 
@@ -46,6 +46,7 @@ class AlexNet(object):
         self.NUM_CLASSES = num_classes
         self.KEEP_PROB = keep_prob
         self.SKIP_LAYER = skip_layer
+        self.WEIGHT_DECAY = weight_decay
 
         if weights_path == 'DEFAULT':
             self.WEIGHTS_PATH = 'bvlc_alexnet.npy'
@@ -58,36 +59,36 @@ class AlexNet(object):
     def create(self):
         """Create the network graph."""
         # 1st Layer: Conv (w ReLu) -> Lrn -> Pool
-        conv1 = conv(self.X, 11, 11, 96, 4, 4, padding='VALID', name='conv1')
+        conv1 = conv(self.X, 11, 11, 96, 4, 4, padding='VALID', name='conv1', weight_decay=self.WEIGHT_DECAY)
         norm1 = lrn(conv1, 2, 1e-05, 0.75, name='norm1')
         pool1 = max_pool(norm1, 3, 3, 2, 2, padding='VALID', name='pool1')
-        
+
         # 2nd Layer: Conv (w ReLu)  -> Lrn -> Pool with 2 groups
-        conv2 = conv(pool1, 5, 5, 256, 1, 1, groups=2, name='conv2')
+        conv2 = conv(pool1, 5, 5, 256, 1, 1, groups=2, name='conv2', weight_decay=self.WEIGHT_DECAY)
         norm2 = lrn(conv2, 2, 1e-05, 0.75, name='norm2')
         pool2 = max_pool(norm2, 3, 3, 2, 2, padding='VALID', name='pool2')
-        
+
         # 3rd Layer: Conv (w ReLu)
-        conv3 = conv(pool2, 3, 3, 384, 1, 1, name='conv3')
+        conv3 = conv(pool2, 3, 3, 384, 1, 1, name='conv3', weight_decay=self.WEIGHT_DECAY)
 
         # 4th Layer: Conv (w ReLu) splitted into two groups
-        conv4 = conv(conv3, 3, 3, 384, 1, 1, groups=2, name='conv4')
+        conv4 = conv(conv3, 3, 3, 384, 1, 1, groups=2, name='conv4', weight_decay=self.WEIGHT_DECAY)
 
         # 5th Layer: Conv (w ReLu) -> Pool splitted into two groups
-        conv5 = conv(conv4, 3, 3, 256, 1, 1, groups=2, name='conv5')
+        conv5 = conv(conv4, 3, 3, 256, 1, 1, groups=2, name='conv5', weight_decay=self.WEIGHT_DECAY)
         pool5 = max_pool(conv5, 3, 3, 2, 2, padding='VALID', name='pool5')
 
         # 6th Layer: Flatten -> FC (w ReLu) -> Dropout
-        flattened = tf.reshape(pool5, [-1, 6*6*256])
-        fc6 = fc(flattened, 6*6*256, 4096, name='fc6')
+        flattened = tf.reshape(pool5, [-1, 6 * 6 * 256])
+        fc6 = fc(flattened, 6 * 6 * 256, 4096, name='fc6', weight_decay=self.WEIGHT_DECAY)
         dropout6 = dropout(fc6, self.KEEP_PROB)
 
         # 7th Layer: FC (w ReLu) -> Dropout
-        fc7 = fc(dropout6, 4096, 4096, name='fc7')
+        fc7 = fc(dropout6, 4096, 4096, name='fc7', weight_decay=self.WEIGHT_DECAY)
         dropout7 = dropout(fc7, self.KEEP_PROB)
 
         # 8th Layer: FC and return unscaled activations
-        self.fc8 = fc(dropout7, 4096, self.NUM_CLASSES, relu=False, name='fc8')
+        self.fc8 = fc(dropout7, 4096, self.NUM_CLASSES, relu=False, name='fc8', weight_decay=self.WEIGHT_DECAY)
 
     def load_initial_weights(self, session):
         """Load weights from file into network.
@@ -113,7 +114,7 @@ class AlexNet(object):
 
                         # Biases
                         if len(data.shape) == 1:
-                            var = tf.get_variable('biases', trainable=True)# todo: trainable
+                            var = tf.get_variable('biases', trainable=True)  # todo: trainable
                             session.run(var.assign(data))
 
                         # Weights
@@ -122,7 +123,14 @@ class AlexNet(object):
                             session.run(var.assign(data))
 
 
-def conv(x, filter_height, filter_width, num_filters, stride_y, stride_x, name,
+def get_weight(shape, lambda1):
+    var = tf.get_variable(name='weights', shape=shape, initializer=tf.contrib.layers.variance_scaling_initializer(),
+                          dtype=tf.float32, trainable=True)
+    tf.add_to_collection('losses', tf.contrib.layers.l2_regularizer(lambda1)(var))
+    return var
+
+
+def conv(x, filter_height, filter_width, num_filters, stride_y, stride_x, name, weight_decay,
          padding='SAME', groups=1):
     """Create a convolution layer.
 
@@ -139,14 +147,17 @@ def conv(x, filter_height, filter_width, num_filters, stride_y, stride_x, name,
 
     with tf.variable_scope(name) as scope:
         # Create tf variables for the weights and biases of the conv layer
-        weights = tf.get_variable('weights', shape=[filter_height,
-                                                    filter_width,
-                                                    input_channels/groups,
-                                                    num_filters])
+        # weights = tf.get_variable('weights', shape=[filter_height,
+        #                                             filter_width,
+        #                                             input_channels / groups,
+        #                                             num_filters])
+        weights = get_weight(shape=[filter_height, filter_width, int(input_channels / groups), num_filters],
+                             lambda1=weight_decay)  # todo
         biases = tf.get_variable('biases', shape=[num_filters])
 
     if groups == 1:
         conv = convolve(x, weights)
+
 
     # In the cases of multiple groups, split inputs & weights and
     else:
@@ -160,21 +171,24 @@ def conv(x, filter_height, filter_width, num_filters, stride_y, stride_x, name,
         conv = tf.concat(axis=3, values=output_groups)
 
     # Add biases
-    bias = tf.reshape(tf.nn.bias_add(conv, biases), tf.shape(conv))
+    # bias = tf.reshape(tf.nn.bias_add(conv, biases), tf.shape(conv))
 
     # Apply relu function
-    relu = tf.nn.relu(bias, name=scope.name)
+    # relu = tf.nn.relu(bias, name=scope.name)
+
+    relu = tf.nn.relu(tf.nn.bias_add(conv, biases))
 
     return relu
 
 
-def fc(x, num_in, num_out, name, relu=True):
+def fc(x, num_in, num_out, name, weight_decay, relu=True, ):
     """Create a fully connected layer."""
     with tf.variable_scope(name) as scope:
 
         # Create tf variables for the weights and biases
-        weights = tf.get_variable('weights', shape=[num_in, num_out],
-                                  trainable=True)
+        weights = get_weight(shape=[num_in, num_out], lambda1=weight_decay)  # todo
+        # weights = tf.get_variable('weights', shape=[num_in, num_out],
+        #                           trainable=True)
         biases = tf.get_variable('biases', [num_out], trainable=True)
 
         # Matrix multiply weights and inputs and add bias
