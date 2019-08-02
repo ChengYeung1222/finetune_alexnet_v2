@@ -28,7 +28,7 @@ import numpy as np
 class AlexNet(object):
     """Implementation of the AlexNet."""
 
-    def __init__(self, x, keep_prob, num_classes, skip_layer, weight_decay,
+    def __init__(self, x, keep_prob, num_classes, skip_layer, weight_decay, moving_average_decay, frozen_layer,
                  weights_path='DEFAULT'):
         """Create the graph of the AlexNet model.
 
@@ -46,7 +46,9 @@ class AlexNet(object):
         self.NUM_CLASSES = num_classes
         self.KEEP_PROB = keep_prob
         self.SKIP_LAYER = skip_layer
+        self.FROZEN_LAYER = frozen_layer
         self.WEIGHT_DECAY = weight_decay
+        self.MOVING_AVERAGE_DECAY = moving_average_decay
 
         if weights_path == 'DEFAULT':
             self.WEIGHTS_PATH = 'bvlc_alexnet.npy'
@@ -111,15 +113,22 @@ class AlexNet(object):
 
                     # Assign weights/biases to their corresponding tf variable
                     for data in weights_dict[op_name]:
+                        # if op_name not in self.FROZEN_LAYER:
+                        #     trainable = True
+                        # else:
+                        #     trainable = False
 
                         # Biases
                         if len(data.shape) == 1:
-                            var = tf.get_variable('biases', trainable=True)  # todo: trainable
+                            var = tf.get_variable('biases',
+                                                  trainable=[True if op_name not in self.FROZEN_LAYER else False][
+                                                      0])  # todo: trainable
                             session.run(var.assign(data))
 
                         # Weights
                         else:
-                            var = tf.get_variable('weights', trainable=True)
+                            var = tf.get_variable('weights',
+                                                  trainable=[True if op_name not in self.FROZEN_LAYER else False][0])
                             session.run(var.assign(data))
 
 
