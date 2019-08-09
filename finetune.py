@@ -33,16 +33,18 @@ train_file = './train_list.csv'  # todo: 修改train_file = './List/jiaojia/28xu
 val_file = './val_list.csv'  # todo:修改val_file = './List/jiaojia/28xunlian/jiaojia_val_all_list.csv'
 
 # Learning paramsxiugai
-learning_rate = 1e-4  # TODO: 5e-5
-num_epochs = 200  # TODO :2:20
+learning_rate = 5e-5  # TODO: 5e-5, 1e-4, 1e-3
+num_epochs = 50  # TODO :2:20
 batch_size = 256  # TODO: 128
 depth = 6  # todo:11
 # Network params
 dropout_rate = 0.5
-weight_decay = 1e-3#todo:1e-4
+weight_decay = 1e-3  # todo:1e-4,1e-3,5e-4
+moving_average_decay = 0.99
 num_classes = 2
-train_layers = ['conv1','fc6', 'fc7', 'fc8']  # TODO: 'fc8'
+train_layers = ['conv1', 'fc6', 'fc7', 'fc8']  # TODO: 'fc8'
 all_layers = ['conv1', 'conv2', 'conv3', 'conv4', 'conv5', 'fc6', 'fc7', 'fc8']
+frozen_layers = ['conv2', 'conv3']
 
 # How often we want to write the tf.summary data to disk
 display_step = 20
@@ -88,9 +90,10 @@ validation_init_op = iterator.make_initializer(val_data.data)
 x = tf.placeholder(tf.float32, [batch_size, 227, 227, depth])
 y = tf.placeholder(tf.float32, [batch_size, num_classes])
 keep_prob = tf.placeholder(tf.float32)
+global_step = tf.Variable(0)
 
 # Initialize model
-model = AlexNet(x, keep_prob, num_classes, train_layers,weight_decay)
+model = AlexNet(x, keep_prob, num_classes, train_layers, weight_decay, moving_average_decay, frozen_layer=frozen_layers)
 
 # Link variable to model output
 score = model.fc8
@@ -121,16 +124,20 @@ def f1(y_hat, y_true, model='multi'):
 # List of trainable variables of the layers we want to train
 var_list = [v for v in tf.trainable_variables() if v.name.split('/')[0] in all_layers]
 
+# ema
+variable_averages = tf.train.ExponentialMovingAverage(moving_average_decay, global_step)
+variable_averages_op = variable_averages.apply(var_list)
+
 # Op for calculating the loss
 with tf.name_scope("cross_ent"):
     empirical_loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(logits=score,
-                                                                     labels=tf.clip_by_value(y,
-                                                                                             1e-4,
-                                                                                             tf.reduce_max(
-                                                                                                 y))))
-    tf.add_to_collection('losses',empirical_loss)
+                                                                               labels=tf.clip_by_value(y,
+                                                                                                       1e-4,
+                                                                                                       tf.reduce_max(
+                                                                                                           y))))
+    tf.add_to_collection('losses', empirical_loss)
 
-loss=tf.add_n(tf.get_collection('losses'))
+loss = tf.add_n(tf.get_collection('losses'))
 
 # Train op
 with tf.name_scope("train"):
@@ -139,10 +146,15 @@ with tf.name_scope("train"):
     # gradients = list(zip(gradients, var_list))
 
     # Create optimizer and apply gradient descent to the trainable variables
-    optimizer = tf.train.AdamOptimizer(learning_rate)
-    gradients=optimizer.compute_gradients(loss)
+    lr = tf.train.exponential_decay(learning_rate=learning_rate, global_step=global_step, decay_steps=80,  # todo:100
+                                    decay_rate=0.96,
+                                    staircase=True)
+    optimizer = tf.train.AdamOptimizer(lr)
+    gradients = optimizer.compute_gradients(loss)
     capped_gradients = [(tf.clip_by_value(grad, -1., 1.), var) for grad, var in gradients if grad is not None]
-    train_op = optimizer.apply_gradients(grads_and_vars=capped_gradients)
+    train_step = optimizer.apply_gradients(grads_and_vars=capped_gradients, global_step=global_step)
+    with tf.control_dependencies([train_step, variable_averages_op]):
+        train_op = tf.no_op(name='train')
 
 # Add gradients to summary
 for gradient, var in capped_gradients:
@@ -195,7 +207,7 @@ config.gpu_options.allow_growth = True
 sess = tf.Session(config=config)
 
 # Initialize the FileWriter
-train_writer = tf.summary.FileWriter(filewriter_path_train,sess.graph)
+train_writer = tf.summary.FileWriter(filewriter_path_train, sess.graph)
 validate_writer = tf.summary.FileWriter(filewriter_path_val)
 
 sess.run(tf.global_variables_initializer())
@@ -224,9 +236,9 @@ for epoch in range(num_epochs):
         img_batch, label_batch = sess.run(next_batch)
 
         # And run the training op
-        sess.run(train_op, feed_dict={x: img_batch,
-                                      y: label_batch,
-                                      keep_prob: dropout_rate})
+        _, g_step = sess.run([train_op, global_step], feed_dict={x: img_batch,
+                                                                 y: label_batch,
+                                                                 keep_prob: dropout_rate})
 
         # Generate summary with the current batch of data and write to file
         if step % display_step == 0:
