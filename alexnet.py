@@ -119,10 +119,10 @@ class AlexNet(object):
                         #     trainable = False
 
                         # Biases
+                        trainable = [True if op_name not in self.FROZEN_LAYER else False][0]
                         if len(data.shape) == 1:
                             var = tf.get_variable('biases',
-                                                  trainable=[True if op_name not in self.FROZEN_LAYER else False][
-                                                      0])  # todo: trainable
+                                                  trainable=False)  # todo: trainable
                             session.run(var.assign(data))
 
                         # Weights
