@@ -32,6 +32,39 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 train_file = './train_list.csv'  # todo: 修改train_file = './List/jiaojia/28xunlian/jiaojia_train_all_list.csv'
 val_file = './val_list.csv'  # todo:修改val_file = './List/jiaojia/28xunlian/jiaojia_val_all_list.csv'
 
+with open(train_file, 'r') as f1, open(val_file, 'r')as f2:
+    lines = f1.readlines()
+    len_train_ones = 0
+    len_train_zeros = 0
+    len_train_dataset = 0
+    for line in lines:
+        items = line.split(',')
+        len_train_dataset += 1
+
+        if int(items[1]) == 1:
+            len_train_ones += 1
+    lines1 = f2.readlines()
+    for line in lines1:
+        items = line.split(',')
+        len_train_dataset += 1
+
+        if int(items[1]) == 1:
+            len_train_ones += 1
+    len_train_zeros = len_train_dataset - len_train_ones
+
+# with open(val_file, 'r') as f:
+#     lines = f.readlines()
+#     len_val_ones = 0
+#     len_val_zeros = 0
+#     len_val_dataset=0
+#     for line in lines:
+#         items = line.split(',')
+#         len_val_dataset+=1
+#
+#         if int(items[1]) == 1:
+#             len_val_ones += 1
+#     len_val_zeros = len_val_dataset - len_val_ones
+
 # Learning paramsxiugai
 learning_rate = 5e-5  # TODO: 5e-5, 1e-4, 1e-3
 num_epochs = 50  # TODO :2:20
@@ -99,6 +132,13 @@ model = AlexNet(x, keep_prob, num_classes, train_layers, weight_decay, moving_av
 score = model.fc8
 soft_max = tf.nn.softmax(score)
 
+y_1 = soft_max[:, 1]
+y_0 = soft_max[:, 0]
+ratio_source = y_1 / y_0 * len_train_zeros / len_train_ones
+soft_max_new = tf.Variable(tf.zeros_like(tensor=soft_max))
+soft_max_new[:, 1].assign(ratio_source / (ratio_source + 1))
+soft_max_new[:, 0].assign(1 / (ratio_source + 1))
+
 
 # f1score
 def f1(y_hat, y_true, model='multi'):
@@ -122,7 +162,7 @@ def f1(y_hat, y_true, model='multi'):
 
 
 # List of trainable variables of the layers we want to train
-var_list = [v for v in tf.trainable_variables() if v.name.split('/')[0] in all_layers]
+var_list = [v for v in tf.trainable_variables() if v.name.split('/')[0] in list(set(all_layers) - set(frozen_layers))]
 
 # ema
 variable_averages = tf.train.ExponentialMovingAverage(moving_average_decay, global_step)
@@ -169,11 +209,11 @@ tf.summary.scalar('cross_entropy', empirical_loss)
 
 # Evaluation op: Accuracy of the model
 with tf.name_scope("accuracy"):
-    correct_pred = tf.equal(tf.argmax(score, 1), tf.argmax(y, 1))
+    correct_pred = tf.equal(tf.argmax(soft_max_new, 1), tf.argmax(y, 1))
     accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
 
 with tf.name_scope('f1score'):
-    f1score = f1(soft_max, y)
+    f1score = f1(soft_max_new, y)
 
 # with tf.name_scope("auc"):
 #     softmax=tf.nn.softmax(score)
@@ -236,7 +276,7 @@ for epoch in range(num_epochs):
         img_batch, label_batch = sess.run(next_batch)
 
         # And run the training op
-        _, g_step = sess.run([train_op, global_step], feed_dict={x: img_batch,
+        _, g_step,softmax = sess.run([train_op, global_step,soft_max], feed_dict={x: img_batch,
                                                                  y: label_batch,
                                                                  keep_prob: dropout_rate})
 
