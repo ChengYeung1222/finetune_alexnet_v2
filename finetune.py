@@ -67,7 +67,7 @@ with open(train_file, 'r') as f1, open(val_file, 'r')as f2:
 
 # Learning paramsxiugai
 learning_rate = 5e-5  # TODO: 5e-5, 1e-4, 1e-3
-num_epochs = 50  # TODO :2:20
+num_epochs = 200  # TODO :2:20
 batch_size = 256  # TODO: 128
 depth = 6  # todo:11
 # Network params
@@ -132,12 +132,20 @@ model = AlexNet(x, keep_prob, num_classes, train_layers, weight_decay, moving_av
 score = model.fc8
 soft_max = tf.nn.softmax(score)
 
-y_1 = soft_max[:, 1]
-y_0 = soft_max[:, 0]
-ratio_source = y_1 / y_0 * len_train_zeros / len_train_ones
-soft_max_new = tf.Variable(tf.zeros_like(tensor=soft_max))
-soft_max_new[:, 1].assign(ratio_source / (ratio_source + 1))
-soft_max_new[:, 0].assign(1 / (ratio_source + 1))
+config = tf.ConfigProto()
+config.gpu_options.per_process_gpu_memory_fraction = 0.9
+config.gpu_options.allow_growth = True
+
+# Start Tensorflow session
+
+sess = tf.Session(config=config)
+
+# y_1 = soft_max[:, 1]
+# y_0 = soft_max[:, 0]
+# ratio_source = y_1 / y_0 * len_train_zeros / len_train_ones
+# soft_max_new = tf.Variable(tf.zeros_like(tensor=soft_max))
+# soft_max_new[:, 1].assign(ratio_source / (ratio_source + 1))
+# soft_max_new[:, 0].assign(1 / (ratio_source + 1))
 
 
 # f1score
@@ -209,24 +217,24 @@ tf.summary.scalar('cross_entropy', empirical_loss)
 
 # Evaluation op: Accuracy of the model
 with tf.name_scope("accuracy"):
-    correct_pred = tf.equal(tf.argmax(soft_max_new, 1), tf.argmax(y, 1))
+    correct_pred = tf.equal(tf.argmax(soft_max, 1), tf.argmax(y, 1))
     accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
 
 with tf.name_scope('f1score'):
-    f1score = f1(soft_max_new, y)
+    f1score = f1(soft_max, y)
 
-# with tf.name_scope("auc"):
-#     softmax=tf.nn.softmax(score)
-#     prediction_list = tf.placeholder(tf.float32, [batch_size, num_classes], name='prediction_list')
-#     auc=tf.metrics.auc(labels=y,predictions=prediction_list)
+with tf.name_scope("auc"):
+    softmax=tf.nn.softmax(score)
+    # prediction_list = tf.placeholder(tf.float32, [batch_size, num_classes], name='prediction_list')
+    auc,auc_op=tf.metrics.auc(labels=y,predictions=soft_max)
 
 # Add the accuracy to the summary
 # train_summary=tf.summary.scalar('training_accuracy', accuracy)
 # validation_summary=tf.summary.scalar('validation_accuracy',accuracy)
 tf.summary.scalar('accuracy', accuracy)
 tf.summary.scalar('f1score', f1score)
-# validation_summary=tf.summary.scalar('validation_f1score',f1score)
-# tf.summary.scalar('f1score', f1score)
+tf.summary.scalar('auc',auc)
+
 
 # Merge all summaries together
 merged_summary = tf.summary.merge_all()
@@ -238,19 +246,14 @@ saver = tf.train.Saver()
 train_batches_per_epoch = int(np.floor(tr_data.data_size / batch_size))
 val_batches_per_epoch = int(np.floor(val_data.data_size / batch_size))
 
-config = tf.ConfigProto()
-config.gpu_options.per_process_gpu_memory_fraction = 0.9
-config.gpu_options.allow_growth = True
 
-# Start Tensorflow session
-
-sess = tf.Session(config=config)
 
 # Initialize the FileWriter
 train_writer = tf.summary.FileWriter(filewriter_path_train, sess.graph)
 validate_writer = tf.summary.FileWriter(filewriter_path_val)
 
 sess.run(tf.global_variables_initializer())
+sess.run(tf.local_variables_initializer())
 
 # train_writer.add_graph(graph=sess.graph)
 # validate_writer.add_graph(graph=sess.graph)
@@ -276,7 +279,7 @@ for epoch in range(num_epochs):
         img_batch, label_batch = sess.run(next_batch)
 
         # And run the training op
-        _, g_step,softmax = sess.run([train_op, global_step,soft_max], feed_dict={x: img_batch,
+        _,_, g_step,softmax = sess.run([train_op,auc_op, global_step,soft_max], feed_dict={x: img_batch,
                                                                  y: label_batch,
                                                                  keep_prob: dropout_rate})
 
@@ -299,7 +302,7 @@ for epoch in range(num_epochs):
         #                                     y: label_batch,
         #                                     keep_prob: 1.})
         if step2 % display_step == 0:
-            val_summary, acc, f1_score = sess.run([merged_summary, accuracy, f1score], feed_dict={x: img_batch,
+            val_summary, acc, f1_score,auc_value = sess.run([merged_summary, accuracy, f1score,auc], feed_dict={x: img_batch,
                                                                                                   y: label_batch,
                                                                                                   keep_prob: 1.})
 
@@ -315,6 +318,7 @@ for epoch in range(num_epochs):
     val_acc /= val_count
     print("{} Validation Accuracy = {:.4f}".format(datetime.now(), val_acc))
     print('{} Validation f1score = {:.4f}'.format(datetime.now(), f1_score))
+    print('{} Validation auc_value = {:.4f}'.format(datetime.now(), auc_value))
     print("{} Saving checkpoint of model...".format(datetime.now()))
 
     # save checkpoint of the model
