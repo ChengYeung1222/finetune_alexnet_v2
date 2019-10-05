@@ -34,10 +34,7 @@ output_dir = './PreResult'
 if not os.path.isdir(output_dir):
     os.mkdir(output_dir)
 output_file = open(os.path.join(output_dir,
-                                "prediction_cp57_{}-{}.txt".format(FLAGS.iter_epoch * FLAGS.pre_size,
-                                                                   FLAGS.iter_epoch * FLAGS.pre_size \
-                                                                   + FLAGS.pre_size - 1)), 'a+'
-                                                                                           '')
+                                "prediction_cp30.txt"), 'a+')  # todo:
 
 output_file.write('Sample, ' + 'Pred_1,' + '\n')
 
